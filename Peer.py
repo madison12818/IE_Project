@@ -80,22 +80,3 @@ class Peer():
       for resource in self.resources:
          print("  {}: {}".format(resource, self.resources[resource]))
 
-################################################################################
-
-
-def participateInOAuth():
-   '''while True:
-      #check for messages in queue
-      if messageQueue:
-         #if there are messages, dequeue message and proccess
-         processMessage(messageQueue.pop())
-         print()
-      else:
-         #if there are no messages, wait a few seconds
-         time.sleep(5)
-   '''
-
-def processMessage(message):
-   Mreceived = message
-
-################################################################################
