@@ -43,9 +43,13 @@ class Peer():
          self.resources = json.load(json_file)
 
       #set up client/server props
+      try:
+         self.fd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+      except socket.error as err:
+         'unable to create socket: {}'.format(err)
+
       self.udp_ip = '127.0.0.1'
       self.udp_port = port
-      self.fd = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
       self.fd.bind((self.udp_ip,self.udp_port))
       
       #message queue
