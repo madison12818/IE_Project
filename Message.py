@@ -5,7 +5,11 @@
 
 class Message:
     def __init__(self, messageType, resource, issuer, subject):
-        self.type = messageType
+        self.messageType = messageType
         self.resource = resource
         self.issuer = issuer
         self.subject = subject
+
+def MessageDecoder(obj):
+    if '__type__' in obj and obj['__type__'] == 'Message':
+        return Message(obj['messageType'], obj['resource'], obj['issuer'], obj['subject'])

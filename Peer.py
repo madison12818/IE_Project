@@ -27,7 +27,11 @@ import multiprocessing
 import threading
 from collections import deque
 #add dictionary of port locations so servers can find eachother
-
+resourceLookup = dict()
+resourceLookup['C1'] = 6869
+resourceLookup['C2'] = 6870
+resourceLookup['C3'] = 6871
+resourceLookup['C4'] = 6868
 ##############################################################################
 class Peer():
    def __init__(self, name, policyFileName, resourceFileName, port):
@@ -52,8 +56,14 @@ class Peer():
       self.udp_port = port
       self.fd.bind((self.udp_ip,self.udp_port))
       
-      #message queue
+      #incoming message queue
       self.messageQueue = deque()
+
+      #messages sent
+      self.MSent = deque()
+
+      #messages recieved
+      self.MRecieved = deque()
 
       self.printPolicies()
       self.printResources()
@@ -62,15 +72,152 @@ class Peer():
       recvThread = threading.Thread(target=self.recieveMessage, args=[])
       recvThread.start()
 
+      #begin participateInOAuth in seperate thread
+      OAuthThread = threading.Thread(target=self.participateInOAuth, args=[])
+      OAuthThread.start()
+
    def recieveMessage(self):
       while True:
          r = self.fd.recvfrom(1000)
          recievedMsg = str(r[0], "utf-8")
-         print('{} recieved Message: {}'.format(self.name, recievedMsg))
+
+         #convert the received msg from a str to a Message obj
+         recievedMsg = json.loads(recievedMsg)
+         recievedMsg = Message(**recievedMsg)
+         print('{} recieved: Message[messageType:{}, resource:{}, issuer:{}, subject:{}]'.format(self.name, recievedMsg.messageType, recievedMsg.resource, recievedMsg.issuer, recievedMsg.subject))
+         #add the message to the incoming message queue
+         self.messageQueue.appendleft(recievedMsg)
 
    def sendMessage(self, message, port):
-      self.fd.sendto(bytearray(message, "utf-8"), (self.udp_ip, port))
-      print("msg sent {}".format(message))
+      #convert the recieved Message obj to a json string
+      jsonMsg = json.dumps(message.__dict__) 
+
+      #send the json string
+      self.fd.sendto(bytearray(jsonMsg, "utf-8"), (self.udp_ip, port))
+      print('{} sent: Message[messageType:{}, resource:{}, issuer:{}, subject:{}]'.format(self.name, message.messageType, message.resource, message.issuer, message.subject))
+
+   def participateInOAuth(self):
+      while True:
+         if self.messageQueue:
+            #queue not empty, do work
+            msg = self.messageQueue.pop()
+            self.processMessage(msg)
+         else:
+            #empty queue, sleep for a little
+            time.sleep(10)
+
+   def processMessage(self, m):
+      self.MRecieved.appendleft(m)
+      if m.messageType == 'offer':
+         self.resources[m.resource] = True
+      msgs = self.resolutionResolver(self.MRecieved, self.MSent)
+      for msg in msgs:
+         self.MSent.appendleft(msg)
+         self.sendMessage(msg, msg.subject)
+
+   def resolutionResolver(self, MReceived, MSent):
+      print('\n====Resolution Resolver====')
+
+      #latest message received
+      m = MReceived[0]
+      print("latest message: Message[messageType:{}, resource:{}, issuer:{}, subject:{}]".format(m.messageType, m.resource, m.issuer, m.subject))
+
+      #set of credentials pthis requested from others
+      Qsent = set()
+      for msg in MSent:
+         if msg.messageType == 'request':
+            Qsent.add(msg.resource)
+      print("Peer has requested: {}".format(Qsent))
+
+      #set of credentials others requested from pthis
+      Qrecieved = set()
+      for msg in MReceived:
+         if msg.messageType == 'request':
+            Qrecieved.add(msg.resource)
+      print("Other peers have requested: {}".format(Qrecieved))
+
+      #set of credentials pthis sent to others
+      Dsent = set()
+      for msg in MSent:
+         if msg.messageType == 'offer':
+            Dsent.add(msg.resource)
+      print("Peer has offered: {}".format(Dsent))
+
+      #set of credentials pthis recieved from others
+      Drecieved = set()
+      for msg in MReceived:
+         if msg.messageType == 'offer':
+            Drecieved.add(msg.resource)
+      print("Other peers have offered: {}".format(Drecieved))
+
+      #if incoming msg resource not in self.policies
+         #check if resource is in resourceLookup
+            #if it is send message to location resource is located
+         #else send error and quit
+      if m.resource not in self.policies:
+         messages = list()
+         if m.resource in resourceLookup:
+            m.issuer = self.udp_port
+            m.subject = resourceLookup[m.resource]
+            messages.append(m)
+            return messages
+         else:
+            print("Resource {} can't be found".format(m.resource))
+            return messages
+         
+
+      #Calculate new credentials Dnew that Pthis will send to other parties  
+
+      #isUnlocked is True if all credentials required for a resource have been received    
+      isUnlocked = True
+      for policy in self.policies[m.resource]:
+         print("--policyCheck:{}".format(policy))
+         #if the policy is true, resource is available
+         if policy == 'True':
+            break
+         #if this peer hasn't recieved any credentials, then resource not available
+         if Drecieved == set():
+            isUnlocked = False
+            break
+         #if every credential in policies has been received, then resource is unlocked, otherwise keep resource unavailable
+         if policy not in Drecieved:
+            isUnlocked = False
+
+      print("isUnlocked:{}".format(isUnlocked))
+
+      #credentials to offer 
+      Dnew = set()
+
+      #credentials to request
+      Qnew = set()
+
+      if m.messageType == 'offer':
+         Dunlocked = Drecieved
+
+         if isUnlocked:
+            Dunlocked.add(m.resource)
+
+         Dnew = Dunlocked & (Qrecieved - Dsent)
+      elif m.messageType == 'request' and isUnlocked:
+         Dnew.add(m.resource)
+      else:
+         Drelevant = set(self.policies[m.resource])
+         Qnew = Drelevant - Drecieved - Qsent
+      
+      print("Credentials to be offered: {}".format(Dnew))
+      print("Credentials to be requested: {}".format(Qnew))
+
+      messages = list()
+      for credential in Dnew:
+         sendTo = m.issuer
+         messages.append(Message('offer', credential, self.udp_port, sendTo))
+      
+      for credential in Qnew:
+         sendTo = 6868 if self.name != 'client' else resourceLookup[m.resource]
+         messages.append(Message('request', credential, self.udp_port, sendTo))
+
+      print("===End of resolution algo===")
+      return messages
 
    #print loaded policies
    def printPolicies(self):
