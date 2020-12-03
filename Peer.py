@@ -25,11 +25,11 @@ from Message import *
 import socket
 import multiprocessing
 import threading
-from collections import deque
-#add dictionary of port locations so servers can find eachother
+from queue import Queue, LifoQueue
+#add dictionary of port locations so servers can find each other
 
 ##############################################################################
-class Peer():
+class Peer:
    def __init__(self, name, policyFileName, resourceFileName, port):
       #set a name to peer
       self.name = name
@@ -53,7 +53,11 @@ class Peer():
       self.fd.bind((self.udp_ip,self.udp_port))
       
       #message queue
-      self.messageQueue = deque()
+      self.messageQueue = Queue(128)
+
+      #past message stacks
+      self.mrecv = LifoQueue(128)
+      self.msent = LifoQueue(128)
 
       self.printPolicies()
       self.printResources()
@@ -84,3 +88,29 @@ class Peer():
       for resource in self.resources:
          print("  {}: {}".format(resource, self.resources[resource]))
 
+   def resolutionResolver(self):
+      message = self.mrecv.get()
+      if message.resource not in self.resources:
+         tosend = Message('error', message.resource, self.name, message.issuer)
+         self.sendMessage(tosend, 6868)
+      else:
+         for policy in self.policies:
+            if policy
+
+
+   def participateInOAuth(self):
+      while True:
+         if not self.messageQueue.empty():
+            message = self.messageQueue.get()
+            self.processMessage(message)
+         else:
+            time.sleep(0.2) #may change this delay
+
+   def processMessage(self, message):
+      self.mrecv.put(message)
+      if message.type == 'request':
+         messageList = self.resolutionResolver()
+         if messageList:
+            for m in messageList:
+               self.sendMessage(m, 6869)
+               self.mrecv.put(m)
