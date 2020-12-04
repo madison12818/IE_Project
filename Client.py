@@ -5,7 +5,7 @@ def main():
     client = Peer('client', 'Client_Policy.json', 'Client_Resource.json', 6868)
     print("\n")
 
-    initialMsg = Message("request", "C1", 6868, 6869)
+    initialMsg = Message(messageType="request", resource="C1", issuer=6868, subject=6869, originalRequester=6868)
     client.sendMessage(initialMsg, 6869)
 
 if __name__ == "__main__":

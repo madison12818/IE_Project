@@ -1,22 +1,10 @@
 '''
 
-Peer class has the following components:
-1. Resource data structure (L) : a JSON format file: { “C1”: “discount 20%”
-                                                       “C2”: “Credit Score 780”
-                                                       “C3”: “Alex.kent.edu”,
-                                                       “C4”: “ID81023456”
-                                                     }
-2. Policy data structure: a JSON format file { “C1”:[[“C2”, “C3”],
-                                               “C2”: [True],
-                                               “C3”: [“C4”],
-                                               “C4”: “TRUE”
-                                             }
-
-3. send a message method: call the message class and create a message to other peers
-4. Receive a message method:
-5. Resolution Resolver: an algorithm that will be invoked when a message m is received. It extracts the
-   requested credential (C) from the message, check the policy and send new messages to request all the item
-   in the policy from different parties. See the example in Resolution_Resolver.py
+To run:
+   1. open 4 terminal windows
+   2. run ResourceServer.py, AuthServer1.py, AuthServer2.py, Client.py in the seperate terminal windows
+         -example command: Python3 ResourceServer.py
+   3. Make sure the last file ran is always Client.py since it will initiate the first message (if the other files are not running the message sent won't reach them)
 
 '''
 import json
@@ -26,7 +14,7 @@ import socket
 import multiprocessing
 import threading
 from collections import deque
-#add dictionary of port locations so servers can find eachother
+#dictionary of port locations so servers can find eachother
 resourceLookup = dict()
 resourceLookup['C1'] = 6869
 resourceLookup['C2'] = 6870
@@ -116,74 +104,72 @@ class Peer():
          self.sendMessage(msg, msg.subject)
 
    def resolutionResolver(self, MReceived, MSent):
-      print('\n====Resolution Resolver====')
-
       #latest message received
       m = MReceived[0]
-      print("latest message: Message[messageType:{}, resource:{}, issuer:{}, subject:{}]".format(m.messageType, m.resource, m.issuer, m.subject))
 
       #set of credentials pthis requested from others
       Qsent = set()
       for msg in MSent:
          if msg.messageType == 'request':
             Qsent.add(msg.resource)
-      print("Peer has requested: {}".format(Qsent))
 
       #set of credentials others requested from pthis
       Qrecieved = set()
       for msg in MReceived:
          if msg.messageType == 'request':
             Qrecieved.add(msg.resource)
-      print("Other peers have requested: {}".format(Qrecieved))
 
       #set of credentials pthis sent to others
       Dsent = set()
       for msg in MSent:
          if msg.messageType == 'offer':
             Dsent.add(msg.resource)
-      print("Peer has offered: {}".format(Dsent))
 
       #set of credentials pthis recieved from others
       Drecieved = set()
       for msg in MReceived:
          if msg.messageType == 'offer':
             Drecieved.add(msg.resource)
-      print("Other peers have offered: {}".format(Drecieved))
 
-      #if incoming msg resource not in self.policies
+      #if incoming msg resource not in self.policies and isnt an offer
          #check if resource is in resourceLookup
-            #if it is send message to location resource is located
+            #if it is send message to where resource is located
          #else send error and quit
-      if m.resource not in self.policies:
-         messages = list()
+      #if incoming msg resource not in self.policies and is an offer and is not originalRequester
+         #then find message that originally requested m.resource and use it's originalRequester to send offer to originalRequester
+      if m.resource not in self.policies and m.messageType != 'offer':
          if m.resource in resourceLookup:
             m.issuer = self.udp_port
             m.subject = resourceLookup[m.resource]
-            messages.append(m)
-            return messages
+            return [m]
          else:
             print("Resource {} can't be found".format(m.resource))
-            return messages
-         
-
-      #Calculate new credentials Dnew that Pthis will send to other parties  
+            return
+      elif m.resource not in self.policies and m.messageType == 'offer' and self.udp_port != m.originalRequester:
+         for msg in MReceived:
+            if msg.resource == m.resource and msg.messageType == 'request':
+               m.issuer = self.udp_port
+               m.subject = msg.originalRequester
+               return [m]
 
       #isUnlocked is True if all credentials required for a resource have been received    
       isUnlocked = True
-      for policy in self.policies[m.resource]:
-         print("--policyCheck:{}".format(policy))
-         #if the policy is true, resource is available
-         if policy == 'True':
-            break
-         #if this peer hasn't recieved any credentials, then resource not available
-         if Drecieved == set():
-            isUnlocked = False
-            break
-         #if every credential in policies has been received, then resource is unlocked, otherwise keep resource unavailable
-         if policy not in Drecieved:
-            isUnlocked = False
-
-      print("isUnlocked:{}".format(isUnlocked))
+      if m.resource in self.policies:
+         for policy in self.policies[m.resource]:
+            #if the policy is true, resource is available
+            if policy == 'True':
+               break
+            #if this peer hasn't recieved any credentials, then resource not available
+            if Drecieved == set():
+               isUnlocked = False
+               break
+            #if every credential in policies has been received, then resource is unlocked, otherwise keep resource unavailable
+            if policy not in Drecieved:
+               isUnlocked = False
+      else:
+         for policy in self.policies:
+            if not all(item in Drecieved for item in self.policies[policy]):
+               isUnlocked = False
 
       #credentials to offer 
       Dnew = set()
@@ -191,32 +177,30 @@ class Peer():
       #credentials to request
       Qnew = set()
 
+      #Calculate new credentials Dnew that Pthis will send to other parties 
       if m.messageType == 'offer':
          Dunlocked = Drecieved
-
          if isUnlocked:
-            Dunlocked.add(m.resource)
-
+            for resource in self.policies:
+               if m.resource in self.policies[resource]:
+                  Dunlocked.add(resource)
+                  break
          Dnew = Dunlocked & (Qrecieved - Dsent)
       elif m.messageType == 'request' and isUnlocked:
          Dnew.add(m.resource)
       else:
          Drelevant = set(self.policies[m.resource])
          Qnew = Drelevant - Drecieved - Qsent
-      
-      print("Credentials to be offered: {}".format(Dnew))
-      print("Credentials to be requested: {}".format(Qnew))
 
       messages = list()
       for credential in Dnew:
          sendTo = m.issuer
-         messages.append(Message('offer', credential, self.udp_port, sendTo))
+         messages.append(Message('offer', credential, self.udp_port, sendTo, m.originalRequester))
       
       for credential in Qnew:
          sendTo = 6868 if self.name != 'client' else resourceLookup[m.resource]
-         messages.append(Message('request', credential, self.udp_port, sendTo))
+         messages.append(Message('request', credential, self.udp_port, sendTo, self.udp_port))
 
-      print("===End of resolution algo===")
       return messages
 
    #print loaded policies
