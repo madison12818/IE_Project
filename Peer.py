@@ -1,4 +1,9 @@
 '''
+Group Members:
+   Tyler Robarge
+   Mathew Jordan
+   Madison Dockery
+   Luke Sabo
 
 To run:
    1. open 4 terminal windows
